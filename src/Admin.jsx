@@ -1,6 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { db } from "./Config";
-import { collection, getDocs, query, orderBy } from "firebase/firestore";
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  doc,
+  updateDoc,
+} from "firebase/firestore";
 import {
   Container,
   Row,
@@ -9,6 +16,7 @@ import {
   Card,
   Spinner,
   Button,
+  Badge,
 } from "react-bootstrap";
 import {
   FaInbox,
@@ -24,17 +32,27 @@ const Admin = () => {
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isMobileView, setIsMobileView] = useState(false);
+  const lastMessageCount = useRef(0);
+  const audioRef = useRef(null);
 
   useEffect(() => {
-    const fetchMessages = async () => {
-      const q = query(collection(db, "messages"), orderBy("timestamp", "desc"));
-      const snapshot = await getDocs(q);
-      const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    const q = query(collection(db, "messages"), orderBy("timestamp", "desc"));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
+      // Play notification if a new message has arrived
+      if (lastMessageCount.current && data.length > lastMessageCount.current) {
+        audioRef.current?.play();
+      }
+
+      lastMessageCount.current = data.length;
       setMessages(data);
       setLoading(false);
-    };
-
-    fetchMessages();
+    });
 
     const handleResize = () => {
       setIsMobileView(window.innerWidth <= 768);
@@ -42,10 +60,22 @@ const Admin = () => {
 
     handleResize();
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener("resize", handleResize);
+    };
   }, []);
 
-  // WhatsApp-style timestamp formatter
+  const handleSelectMessage = async (msg) => {
+    setSelectedMessage(msg);
+
+    // Mark as read
+    if (!msg.read) {
+      await updateDoc(doc(db, "messages", msg.id), { read: true });
+    }
+  };
+
   const formatTimestamp = (timestamp) => {
     if (!timestamp?.toDate) return "";
     const date = timestamp.toDate();
@@ -77,18 +107,25 @@ const Admin = () => {
           key={msg.id}
           action
           active={selectedMessage?.id === msg.id}
-          onClick={() => setSelectedMessage(msg)}
+          onClick={() => handleSelectMessage(msg)}
+          className="d-flex justify-content-between align-items-start"
+          style={{ backgroundColor: msg.read ? "#fff" : "#ffe6e6" }}
         >
-          <div className="d-flex justify-content-between align-items-start">
-            <div>
-              <strong>{msg.name}</strong>
-              <div className="text-muted" style={{ fontSize: "0.85rem" }}>
-                {msg.phone}
-              </div>
+          <div>
+            <strong>{msg.name}</strong>
+            <div className="text-muted" style={{ fontSize: "0.85rem" }}>
+              {msg.phone}
             </div>
+          </div>
+          <div className="text-end">
             <small className="text-muted" style={{ fontSize: "0.75rem" }}>
               {formatTimestamp(msg.timestamp)}
             </small>
+            {!msg.read && (
+              <Badge bg="danger" className="ms-1">
+                New
+              </Badge>
+            )}
           </div>
         </ListGroup.Item>
       ))}
@@ -97,7 +134,6 @@ const Admin = () => {
 
   const renderChatMessage = () => {
     if (!selectedMessage) return null;
-
     const { service, message, phone, email, timestamp } = selectedMessage;
 
     return (
@@ -147,13 +183,14 @@ const Admin = () => {
         <h5 className="m-0">ALPEK CONSULTANCY</h5>
       </div>
 
+      <audio ref={audioRef} src="/chat-pop.wav" preload="auto" />
+
       {loading ? (
         <div className="text-center py-5">
           <Spinner animation="border" />
         </div>
       ) : (
         <Row>
-          {/* Chat List */}
           {!isMobileView || !selectedMessage ? (
             <Col
               md={2}
@@ -167,7 +204,6 @@ const Admin = () => {
             </Col>
           ) : null}
 
-          {/* Chat Message */}
           {(!isMobileView || selectedMessage) && (
             <Col md={10} className="p-3">
               {selectedMessage ? (
