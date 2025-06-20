@@ -112,7 +112,7 @@ const Admin = () => {
           style={{ backgroundColor: msg.read ? "#fff" : "#ffe6e6" }}
         >
           <div>
-            <strong>{msg.name}</strong>
+            <strong className="text-secondary">{msg.name}</strong>
             <div className="text-muted" style={{ fontSize: "0.85rem" }}>
               {msg.phone}
             </div>
