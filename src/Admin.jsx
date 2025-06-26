@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { db } from "./Config";
+import { db, auth } from "./Config"; // <- Import auth
 import {
   collection,
   query,
@@ -9,6 +9,13 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import {
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  signOut,
+  onAuthStateChanged,
+} from "firebase/auth";
+
+import {
   Container,
   Row,
   Col,
@@ -17,6 +24,9 @@ import {
   Spinner,
   Button,
   Badge,
+  Modal,
+  Form,
+  Alert,
 } from "react-bootstrap";
 import {
   FaInbox,
@@ -32,10 +42,32 @@ const Admin = () => {
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isMobileView, setIsMobileView] = useState(false);
+  const [user, setUser] = useState(null);
+
   const lastMessageCount = useRef(0);
   const audioRef = useRef(null);
 
+  // Auth modal state
+  const [showLogin, setShowLogin] = useState(true);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [resetMsg, setResetMsg] = useState("");
+
+  // Listen for auth state
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setShowLogin(!currentUser);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Load messages once user is logged in
+  useEffect(() => {
+    if (!user) return;
+
     const q = query(collection(db, "messages"), orderBy("timestamp", "desc"));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -44,7 +76,6 @@ const Admin = () => {
         ...doc.data(),
       }));
 
-      // Play notification if a new message has arrived
       if (lastMessageCount.current && data.length > lastMessageCount.current) {
         audioRef.current?.play();
       }
@@ -65,12 +96,10 @@ const Admin = () => {
       unsubscribe();
       window.removeEventListener("resize", handleResize);
     };
-  }, []);
+  }, [user]);
 
   const handleSelectMessage = async (msg) => {
     setSelectedMessage(msg);
-
-    // Mark as read
     if (!msg.read) {
       await updateDoc(doc(db, "messages", msg.id), { read: true });
     }
@@ -85,7 +114,6 @@ const Admin = () => {
     yesterday.setDate(today.getDate() - 1);
 
     const messageDate = new Date(date.setHours(0, 0, 0, 0));
-
     const time = timestamp.toDate().toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
@@ -97,6 +125,33 @@ const Admin = () => {
       return `Yesterday, ${time}`;
     } else {
       return `${date.toLocaleDateString()}, ${time}`;
+    }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError("");
+    setResetMsg("");
+
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      setShowLogin(false);
+    } catch (err) {
+      setAuthError("Invalid credentials");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    setResetMsg("");
+    setAuthError("");
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setResetMsg("Reset link sent to your email.");
+    } catch (err) {
+      setAuthError("Error sending reset email.");
     }
   };
 
@@ -173,49 +228,90 @@ const Admin = () => {
   };
 
   return (
-    <Container fluid className="p-0">
-      {/* Red Title Bar */}
-      <div
-        className="d-flex align-items-center text-white px-3 py-2"
-        style={{ backgroundColor: "#b30000" }}
-      >
-        <FaInbox className="me-2" />
-        <h5 className="m-0">ALPEK CONSULTANCY</h5>
-      </div>
+    <>
+      {/* Login Modal */}
+      <Modal show={showLogin} centered backdrop="static">
+        <Modal.Header>
+          <Modal.Title>Admin Login</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form onSubmit={handleLogin}>
+            <Form.Group controlId="formEmail" className="mb-3">
+              <Form.Label>Email</Form.Label>
+              <Form.Control
+                type="email"
+                value={email}
+                required
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </Form.Group>
+            <Form.Group controlId="formPassword" className="mb-3">
+              <Form.Label>Password</Form.Label>
+              <Form.Control
+                type="password"
+                value={password}
+                required
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </Form.Group>
+            {authError && <Alert variant="danger">{authError}</Alert>}
+            {resetMsg && <Alert variant="success">{resetMsg}</Alert>}
+            <div className="d-flex justify-content-between">
+              <Button variant="secondary" onClick={handleResetPassword}>
+                Reset Password
+              </Button>
+              <Button type="submit" disabled={authLoading}>
+                {authLoading ? "Logging in..." : "Login"}
+              </Button>
+            </div>
+          </Form>
+        </Modal.Body>
+      </Modal>
 
-      <audio ref={audioRef} src="/chat-pop.wav" preload="auto" />
-
-      {loading ? (
-        <div className="text-center py-5">
-          <Spinner animation="border" />
+      {/* Main UI */}
+      <Container fluid className="p-0">
+        <div
+          className="d-flex align-items-center text-white px-3 py-2"
+          style={{ backgroundColor: "#b30000" }}
+        >
+          <FaInbox className="me-2" />
+          <h5 className="m-0">ALPEK CONSULTANCY</h5>
         </div>
-      ) : (
-        <Row>
-          {!isMobileView || !selectedMessage ? (
-            <Col
-              md={2}
-              style={{
-                borderRight: "1px solid #ccc",
-                maxHeight: "85vh",
-                overflowY: "auto",
-              }}
-            >
-              {renderChatList()}
-            </Col>
-          ) : null}
 
-          {(!isMobileView || selectedMessage) && (
-            <Col md={10} className="p-3">
-              {selectedMessage ? (
-                renderChatMessage()
-              ) : (
-                <p className="text-muted">Select a message to view</p>
-              )}
-            </Col>
-          )}
-        </Row>
-      )}
-    </Container>
+        <audio ref={audioRef} src="/chat-pop.wav" preload="auto" />
+
+        {loading ? (
+          <div className="text-center py-5">
+            <Spinner animation="border" />
+          </div>
+        ) : (
+          <Row>
+            {!isMobileView || !selectedMessage ? (
+              <Col
+                md={2}
+                style={{
+                  borderRight: "1px solid #ccc",
+                  maxHeight: "85vh",
+                  overflowY: "auto",
+                }}
+              >
+                {renderChatList()}
+              </Col>
+            ) : null}
+
+            {(!isMobileView || selectedMessage) && (
+              <Col md={10} className="p-3">
+                {selectedMessage ? (
+                  renderChatMessage()
+                ) : (
+                  <p className="text-muted">Select a message to view</p>
+                )}
+              </Col>
+            )}
+          </Row>
+        )}
+      </Container>
+    </>
   );
 };
 
